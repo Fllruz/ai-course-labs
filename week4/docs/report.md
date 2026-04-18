@@ -50,7 +50,8 @@
 
 \### 3.1. Настройка платформы
 
-\[Скриншот интерфейса n8n/ApiX-Drive]
+\<img width="1908" height="941" alt="image" src="https://github.com/user-attachments/assets/bc43873a-f89a-46ff-afe3-05765c0586ff" />
+
 
 
 
@@ -69,10 +70,6 @@
 
 
 \### 3.2. Базовый workflow
-
-\[Схема workflow]
-
-
 
 Базовый workflow включает следующие узлы:
 
