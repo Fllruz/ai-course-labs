@@ -1,0 +1,80 @@
+# docker-compose.yml
+# Конфигурация для развёртывания n8n (Интеллектуальная система слежения за объектами)
+version: '3.8'
+services:
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: n8n_tracking_system
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    environment:
+      - N8N_HOST=${N8N_HOST:-localhost}
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - NODE_ENV=production
+      - WEBHOOK_URL=${WEBHOOK_URL:-http://localhost:5678/}
+      - GENERIC_TIMEZONE=${GENERIC_TIMEZONE:-Europe/Moscow}
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY:-change-this-key}
+      # Yandex Cloud credentials
+      - YANDEX_IAM_TOKEN=${YANDEX_IAM_TOKEN}
+      - YANDEX_FOLDER_ID=${YANDEX_FOLDER_ID}
+      # GigaChat credentials (альтернатива)
+      - GIGACHAT_CLIENT_ID=${GIGACHAT_CLIENT_ID}
+      - GIGACHAT_CLIENT_SECRET=${GIGACHAT_CLIENT_SECRET}
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./workflows:/home/node/workflows
+      - ../data:/home/node/data  # Для хранения данных с видеокамер
+    networks:
+      - tracking_network
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]  # Для GPU-ускорения обработки видео
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: tracking_postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-n8n}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-n8n}
+      - POSTGRES_DB=${POSTGRES_DB:-n8n}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - tracking_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U n8n"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Дополнительный сервис для обработки видео (опционально)
+  video-processor:
+    image: python:3.11-slim
+    container_name: video_processor
+    restart: unless-stopped
+    volumes:
+      - ../src/processors:/app/processors
+      - ../data:/app/data
+    working_dir: /app
+    command: python -m processors.video_stream
+    networks:
+      - tracking_network
+    depends_on:
+      - n8n
+
+volumes:
+  n8n_data:
+    driver: local
+  postgres_data:
+    driver: local
+
+networks:
+  tracking_network:
+    driver: bridge
