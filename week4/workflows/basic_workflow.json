@@ -1,0 +1,150 @@
+{
+ "name": "Обработка заявок с AI-классификацией",
+ "nodes": [
+ {
+ "parameters": {
+ "httpMethod": "POST",
+ "path": "application",
+ "responseMode": "lastNode",
+ "options": {}
+ },
+ "name": "Webhook",
+ "type": "n8n-nodes-base.webhook",
+ "typeVersion": 1,
+ "position": [250, 300],
+ "webhookId": "unique-webhook-id"
+ },
+ {
+ "parameters": {
+"method": "POST",
+ "url": "https://llm.api.cloud.yandex.net/foundationModels/v1/completion",
+ "authentication": "genericCredentialType",
+ "genericAuthType": "httpHeaderAuth",
+ "sendHeaders": true,
+ "headerParameters": {
+ "parameters": [
+ {
+ "name": "Content-Type",
+ "value": "application/json"
+ },
+ {
+ "name": "Authorization",
+ "value": "Bearer {{ $env.YANDEX_IAM_TOKEN }}"
+ },
+ {
+ "name": "x-folder-id",
+ "value": "{{ $env.YANDEX_FOLDER_ID }}"
+ }
+ ]
+ },
+ "sendBody": true,
+ "bodyParameters": {
+ "parameters": [
+ {
+ "name": "modelUri",
+ "value": "gpt://{{ $env.YANDEX_FOLDER_ID }}/yandexGPT/latest"
+ },
+ {
+ "name": "completionOptions.temperature",
+ "value": "0.3"
+ },
+ {
+ "name": "completionOptions.maxTokens",
+ "value": "100"
+ },
+ {
+ "name": "messages",
+ "value": "=[{\"role\":\"system\",\"text\":\"Классифицируй заявку как одну из категорий: техническая_поддержка, продажа,
+вопрос, жалоба. Ответь только названием категории.\"},{\"role\":\"user\",\"text\":\"{{ $json.body.message }}\"}]"
+ }
+ ]
+ },
+ "options": {}
+ },
+ "name": "YandexGPT Classifier",
+ "type": "n8n-nodes-base.httpRequest",
+ "typeVersion": 4,
+ "position": [450, 300]
+ },
+ {
+ "parameters": {
+ "conditions": {
+ "string": [
+ {
+ "value1": "{{ $json.result.alternatives[0].message.text }}",
+ "operation": "equals",
+ "value2": "техническая_поддержка"
+ }
+ ]
+ }
+ },
+ "name": "IF Tech Support",
+ "type": "n8n-nodes-base.if",
+ "typeVersion": 1,
+ "position": [650, 300]
+ },
+ {
+ "parameters": {
+ "method": "POST",
+ "url": "https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/sendMessage",
+ "sendBody": true,
+ "bodyParameters": {
+ "parameters": [
+ {
+ "name": "chat_id",
+ "value": "{{ $env.TELEGRAM_CHAT_ID }}"
+},
+ {
+ "name": "text",
+ "value": "🔧 Новая заявка в техподдержку:\n{{ $json.body.message }}\n\nКонтакт: {{ $json.body.contact }}"
+ }
+ ]
+ }
+ },
+ "name": "Telegram Notification",
+ "type": "n8n-nodes-base.httpRequest",
+ "typeVersion": 4,
+ "position": [850, 300]
+ }
+ ],
+ "connections": {
+ "Webhook": {
+ "main": [
+ [
+ {
+ "node": "YandexGPT Classifier",
+ "type": "main",
+ "index": 0
+ }
+ ]
+ ]
+ },
+ "YandexGPT Classifier": {
+ "main": [
+ [
+ {
+ "node": "IF Tech Support",
+ "type": "main",
+ "index": 0
+ }
+ ]
+ ]
+ },
+ "IF Tech Support": {
+ "main": [
+ [
+ {
+ "node": "Telegram Notification",
+ "type": "main",
+ "index": 0
+ }
+ ]
+ ]
+ }
+ },
+ "settings": {
+ "executionOrder": "v1"
+ },
+ "staticData": null,
+ "tags": []
+}

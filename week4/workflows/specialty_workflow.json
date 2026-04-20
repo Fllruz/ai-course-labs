@@ -1,0 +1,222 @@
+{
+  "name": "Специализированный workflow для интеллектуальной системы слежения",
+  "description": "Обнаружение и отслеживание объектов на видеопотоке с использованием YandexGPT и алгоритмов компьютерного зрения",
+  "author": "Ходжиев Фируз Фарходович",
+  "diploma_topic": "Интеллектуальная система управления видеокамерой с функцией слежения за объектами",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "object-tracking",
+        "responseMode": "lastNode",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "name": "Webhook Video Input",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://llm.api.cloud.yandex.net/foundationModels/v1/completion",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.YANDEX_IAM_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "modelUri",
+              "value": "gpt://{{ $env.YANDEX_FOLDER_ID }}/yandexGPT/latest"
+            },
+            {
+              "name": "completionOptions",
+              "value": "{\"temperature\":0.2,\"maxTokens\":300}"
+            },
+            {
+              "name": "messages",
+              "value": "=[{\"role\":\"system\",\"text\":\"Ты интеллектуальная система анализа видеопотока. Твоя задача: проанализировать описание кадра и определить: 1) тип объекта (человек/животное/транспорт/предмет), 2) координаты объекта (x,y), 3) направление движения, 4) уровень угрозы (low/medium/high), 5) необходимость слежения. Верни JSON: {\\\"object_type\\\": \\\"...\\\", \\\"coordinates\\\": [x,y], \\\"direction\\\": \\\"...\\\", \\\"threat_level\\\": \\\"...\\\", \\\"track_required\\\": true/false, \\\"confidence\\\": 0.0-1.0}\"},{\"role\":\"user\",\"text\":\"{{ JSON.parse($json.body).frame_description || 'Анализ видеокадра: обнаружено движение в зоне слежения' }}\"}]"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "name": "YandexGPT Vision Analyzer",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true
+          },
+          "conditions": [
+            {
+              "id": "track_required_true",
+              "leftValue": "={{ $json.alternatives[0].message.text | jsonParse | get('track_required') }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ]
+        }
+      },
+      "name": "Tracking Decision",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://camera-control-api:8080/api/v1/ptz/track",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "camera_id",
+              "value": "={{ $node['Webhook Video Input'].json.body.camera_id }}"
+            },
+            {
+              "name": "object_coordinates",
+              "value": "={{ $node['YandexGPT Vision Analyzer'].json.alternatives[0].message.text | jsonParse | get('coordinates') }}"
+            },
+            {
+              "name": "object_type",
+              "value": "={{ $node['YandexGPT Vision Analyzer'].json.alternatives[0].message.text | jsonParse | get('object_type') }}"
+            },
+            {
+              "name": "threat_level",
+              "value": "={{ $node['YandexGPT Vision Analyzer'].json.alternatives[0].message.text | jsonParse | get('threat_level') }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "name": "PTZ Tracking Control",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [850, 250]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://alert-system:8080/api/v1/alerts",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "camera_id",
+              "value": "={{ $node['Webhook Video Input'].json.body.camera_id }}"
+            },
+            {
+              "name": "threat_level",
+              "value": "={{ $node['YandexGPT Vision Analyzer'].json.alternatives[0].message.text | jsonParse | get('threat_level') }}"
+            },
+            {
+              "name": "object_type",
+              "value": "={{ $node['YandexGPT Vision Analyzer'].json.alternatives[0].message.text | jsonParse | get('object_type') }}"
+            },
+            {
+              "name": "timestamp",
+              "value": "={{ Date.now() }}"
+            }
+          ]
+        }
+      },
+      "name": "Security Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [850, 400]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combinationMode": "multiplex",
+        "fieldsToCombine": {
+          "fields": {
+            "values": [
+              {
+                "fieldName": "status",
+                "value": "processed"
+              },
+              {
+                "fieldName": "tracking_active",
+                "value": "={{ $node['Tracking Decision'].json.track_required }}"
+              },
+              {
+                "fieldName": "analysis_result",
+                "value": "={{ $node['YandexGPT Vision Analyzer'].json.alternatives[0].message.text }}"
+              },
+              {
+                "fieldName": "processing_time_ms",
+                "value": "={{ Date.now() - $node['Webhook Video Input'].json.timestamp }}"
+              }
+            ]
+          }
+        }
+      },
+      "name": "Response Formatter",
+      "type": "n8n-nodes-base.itemLists",
+      "typeVersion": 1,
+      "position": [1050, 300]
+    }
+  ],
+  "connections": {
+    "Webhook Video Input": {
+      "main": [[{"node": "YandexGPT Vision Analyzer", "type": "main", "index": 0}]]
+    },
+    "YandexGPT Vision Analyzer": {
+      "main": [[{"node": "Tracking Decision", "type": "main", "index": 0}]]
+    },
+    "Tracking Decision": {
+      "main": [
+        [{"node": "PTZ Tracking Control", "type": "main", "index": 0}],
+        [{"node": "Security Alert", "type": "main", "index": 0}]
+      ]
+    },
+    "PTZ Tracking Control": {
+      "main": [[{"node": "Response Formatter", "type": "main", "index": 0}]]
+    },
+    "Security Alert": {
+      "main": [[{"node": "Response Formatter", "type": "main", "index": 0}]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "",
+    "saveExecutionProgress": false,
+    "saveManualExecutions": false,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "none"
+  }
+}
